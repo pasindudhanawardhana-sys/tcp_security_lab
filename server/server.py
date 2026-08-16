@@ -32,11 +32,11 @@ def init_db():
     """)
 
     password_hash=hashlib.sha256(
-        "Labpassword123".encode
-    ).hexdigest
+        "Labpassword123".encode()
+    ).hexdigest()
 
     conn.execute(
-        "INSERT OR IGNORE INTO users VALUES (?,?)",
+        """INSERT OR IGNORE INTO users VALUES (?,?)""",
         ("testuser",password_hash)
     )
 
@@ -115,7 +115,7 @@ def handle_client(client_socket,client_address):
                 break
 
             message=data.decode(
-                "utf-8"
+                "utf-8",
                 errors="replace"
             ).strip()
 
@@ -179,6 +179,68 @@ def handle_client(client_socket,client_address):
         print(
             f"[!] Connection reset by {client_address}"
         )
+
+    finally:
+        client_socket.close()
+        print(
+            f"[-] Connection closed from {client_address}" 
+        )
+    
+
+def start_server():
+            
+        init_db()
+
+
+        server=socket.socket(
+            socket.AF_INET,
+            socket.SOCK_STREAM
+        )
+
+        server.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_REUSEADDR,
+            1
+            )
+
+        server.bind((HOST,PORT))
+
+        server.listen(10)
+
+        print("="*50)
+        print("Cyber Security Lab TCP Server")
+        print("="*50)
+        print(f"Listening on {HOST}:{PORT}")
+        print("Test Account: testuser")
+        print("Press Ctrl+C to stop")
+        print("="*50)
+
+        try:
+
+            
+            while True:
+
+                client_socket,client_address=server.accept()
+
+                thread=threading.Thread(
+                    target=handle_clinet,
+                    args=(client_socket,client_address),
+                    daemon=True
+                    )
+                thread.start()
+
+        except KeyboardInterrupt:
+            print("\n [!] Server shutting down...")
+
+        finally:
+             server.close()
+
+
+if __name__=="__main__":
+    start_server()
+
+        
+
 
 
 
