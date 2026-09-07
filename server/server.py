@@ -89,22 +89,44 @@ def authenticate(username,password):
 
     return password_hash==row[0]
 
+def register_user(username,password):
+    conn=sqlite3.connect(DB_FILE)
+
+    password_hash=hashlib.sha256(
+        password.encode()
+    ).hexdigest()
+
+    try:
+        conn.execute(
+            "INSERT INTO users (username,password_hash) VALUES (?,?)",
+            (username,password_hash)
+        )
+        conn.commit()
+
+        return True
+
+    except sqlite3.IntegrityError:
+        return False
+
+    finally:
+
+        conn.close()
+
 def handle_client(client_socket,client_address):
     client_ip=client_address[0]
 
     username=None
-    authenticate=False
+    authenticated=False
     session_token=None
 
     print(f"[+] Connection from {client_address}")
 
     client_socket.send(
         b"Welcome to the Cyber Lab TCP Server\n"
+         b"LOGIN using : LOGIN username password\n"
     )
-
-    client_socket.send(
-        b"LOGIN using : LOGIN username password\n"
-    )
+       
+    
 
     try:
 
@@ -124,6 +146,12 @@ def handle_client(client_socket,client_address):
             )
 
             if message.startswith("LOGIN "):
+
+                if authenticated:
+                    client_socket.send(b"ERROR: Already logged in\n")
+                    continue
+
+                
                 parts=message.split(" ")
 
                 if(len(parts)!=3):
@@ -144,7 +172,7 @@ def handle_client(client_socket,client_address):
 
                 if authenticate(username,password):
 
-                    authenticate=True
+                    authenticated=True  
                     session_token=secrets.token_hex(16)
 
                     client_socket.send(
@@ -160,7 +188,7 @@ def handle_client(client_socket,client_address):
                     )
 
                 else:
-                    authenticate=False
+                    authenticated=False
 
                     client_socket.send(
                         b"LOGIN FAILED\n"
@@ -174,6 +202,77 @@ def handle_client(client_socket,client_address):
                     )
 
                 continue
+            if message=="LOGOUT":
+                if authenticated:
+                    authenticated=False
+                    session_token=None
+
+                    client_socket.send(b"LOGOUT SUCCESS\n")
+
+                    log_event(
+                        client_ip,
+                        username,
+                        "LOGOUT",
+                        "SUCCESS"
+                    )
+
+                    username=None
+                else:
+                    client_socket.send(b"ERROR: Not Logged in\n")
+
+                    log_event(
+                        client_ip,
+                        username,
+                        "LOGOUT",
+                        "FAILED: Not logged in"
+                    )
+
+                continue
+            if message.startswith("REGISTER "):
+                parts=message.split(" ")
+
+                if len(parts)!=3:
+                    client_socket.send(b"ERROR: Invalid REGISTER format\n")
+
+                    log_event(
+                        client_ip,
+                        username,
+                        "REGISTER",
+                        "FAILED"
+                    )
+
+                    continue
+
+                username=parts[1]
+                password=parts[2]
+                
+
+                if register_user(username,password):
+                    client_socket.send(b"REGISTER SUCCESS\n")
+
+                    log_event(
+                        client_ip,
+                        username,
+                        "REGISTER",
+                        "SUCCESS"
+                    )
+
+
+                else:
+                    client_socket.send(b"REGISTER FAILED: Username already exists\n")
+
+                    log_event(
+                        client_ip,
+                        username,
+                        "REGISTER",
+                        "User already exists"
+                    )
+
+                continue
+
+
+
+
 
     except ConnectionResetError:
         print(
@@ -223,7 +322,7 @@ def start_server():
                 client_socket,client_address=server.accept()
 
                 thread=threading.Thread(
-                    target=handle_clinet,
+                    target=handle_client,
                     args=(client_socket,client_address),
                     daemon=True
                     )
