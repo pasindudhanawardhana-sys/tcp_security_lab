@@ -24,5 +24,8 @@ while True:
     client_socket.send(register_msg.encode())
     register_respond=client_socket.recv(4096)
     print(register_respond.decode())
+
+    if register_msg=="EXIT":
+        break
     
 

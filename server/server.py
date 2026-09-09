@@ -31,12 +31,36 @@ def init_db():
             )
     """)
 
+
+
+    
+    columns=conn.execute(
+        "PRAGMA table_info(users)"
+        
+    ).fetchall()
+
+    column_names=[column[1] for column in columns]
+
+    if "failed_attempts" not in column_names:
+         conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN failed_attempts INTEGER DEFAULT 0
+            """)
+
+    if "locked" not in column_names:
+         conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN locked INTEGER DEFAULT 0
+            """)
+
     password_hash=hashlib.sha256(
         "Labpassword123".encode()
     ).hexdigest()
 
     conn.execute(
-        """INSERT OR IGNORE INTO users VALUES (?,?)""",
+        """INSERT OR IGNORE INTO users
+        (username,password_hash)
+        VALUES (?,?)""",
         ("testuser",password_hash)
     )
 
@@ -74,20 +98,68 @@ def authenticate(username,password):
     conn=sqlite3.connect(DB_FILE)
 
     row=conn.execute(
-        "SELECT password_hash FROM users WHERE username=?",
+        """SELECT password_hash, failed_attempts, locked 
+        FROM users 
+        WHERE username=?""",
         (username,)
     ).fetchone()
 
-    conn.close()
+    
 
     if row is None:
-        return False
+        return "FAILED",0
+    if row[2]==1:
+         conn.close()
+         return "LOCKED",0
 
     password_hash=hashlib.sha256(
         password.encode()
     ).hexdigest()
 
-    return password_hash==row[0]
+    if password_hash==row[0]:
+         
+        conn.execute("""
+            UPDATE users
+            SET failed_attempts=0
+            WHERE username=?
+            """, (username,)
+            )
+
+        conn.commit()
+        conn.close()
+    
+        return "SUCCESS",0
+
+    failed_attempts=row[1]+1
+    attempts_remaining=5-failed_attempts
+
+    if failed_attempts>=5:
+
+        conn.execute("""
+            UPDATE users
+            SET failed_attempts=?, locked=1
+            WHERE username=?""",
+            (failed_attempts,username)
+            )
+
+        conn.commit()
+        conn.close()
+
+        return "LOCKED",0
+
+    conn.execute("""
+        UPDATE users
+        SET failed_attempts=?
+        WHERE username=?""",
+        (failed_attempts,username)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return "FAILED",attempts_remaining
+
+         
 
 def register_user(username,password):
     conn=sqlite3.connect(DB_FILE)
@@ -118,6 +190,7 @@ def handle_client(client_socket,client_address):
     username=None
     authenticated=False
     session_token=None
+    fail_attempts=0
 
     print(f"[+] Connection from {client_address}")
 
@@ -170,7 +243,12 @@ def handle_client(client_socket,client_address):
                 username=parts[1]
                 password=parts[2]
 
-                if authenticate(username,password):
+                result= authenticate(username,password)
+
+                status=result[0]
+                attempts_remaining=result[1]
+
+                if status=="SUCCESS":
 
                     authenticated=True  
                     session_token=secrets.token_hex(16)
@@ -187,11 +265,16 @@ def handle_client(client_socket,client_address):
                         "SUCCESS"
                     )
 
-                else:
+                elif status=="FAILED":
+
+
                     authenticated=False
 
+                    
+
                     client_socket.send(
-                        b"LOGIN FAILED\n"
+                        f"LOGIN FAILED\nAttempts remaining: {attempts_remaining}\n"
+                        .encode()
                     )
 
                     log_event(
@@ -200,6 +283,21 @@ def handle_client(client_socket,client_address):
                         "LOGIN",
                         "FAILED"
                     )
+
+                elif status=="LOCKED":
+                     authenticated=False
+
+                     client_socket.send(
+                          b"Account LOCKED\n" 
+                          b"Too many failed attempts. Please contact the administrator.\n"
+                     )
+
+                     log_event(
+                        client_ip,
+                        username,
+                        "LOGIN",
+                        "LOCKED"
+                     )
 
                 continue
             if message=="LOGOUT":
@@ -228,6 +326,13 @@ def handle_client(client_socket,client_address):
                     )
 
                 continue
+
+            if message.startswith("EXIT"):
+                            client_socket.send(b"Goodbye!\n")
+                            break
+            
+
+            
             if message.startswith("REGISTER "):
                 parts=message.split(" ")
 
@@ -270,7 +375,7 @@ def handle_client(client_socket,client_address):
 
                 continue
 
-
+            
 
 
 
